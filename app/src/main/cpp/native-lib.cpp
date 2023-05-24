@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <string>
+#include <unistd.h>
 #include "header.h"
 
 AVCodecContext *codec_ctx;
@@ -13,7 +14,10 @@ AVStream *out_stream;
 int64_t pts = 0;
 int real_width = 480, real_height = 320;
 int fps = 30;
-
+const int video_frame_rate = 30;
+const int64_t video_frame_duration = AV_TIME_BASE / fps;
+int64_t video_pts = 0;
+int64_t video_dts = 0;
 void rotateI420(jbyte *src_i420_data, jint width, jint height, jbyte *dst_i420_data, jint degree) {
     jint src_i420_y_size = width * height;
     jint src_i420_u_size = (width >> 1) * (height >> 1);
@@ -26,7 +30,7 @@ void rotateI420(jbyte *src_i420_data, jint width, jint height, jbyte *dst_i420_d
     jbyte *dst_i420_u_data = dst_i420_data + src_i420_y_size;
     jbyte *dst_i420_v_data = dst_i420_data + src_i420_y_size + src_i420_u_size;
 
-    if (degree == libyuv::kRotate90 || degree == libyuv::kRotate270) {
+    if (degree == libyuv::kRotate90 || degree == libyuv::kRotate270 || degree == libyuv::kRotate180) {
         libyuv::I420Rotate((const uint8_t *) src_i420_y_data, width,
                            (const uint8_t *) src_i420_u_data, width >> 1,
                            (const uint8_t *) src_i420_v_data, width >> 1,
@@ -54,21 +58,23 @@ void init() {
         return;
     }
     //设置编码
-    codec_ctx->time_base = (AVRational) {1, fps};
+
     codec_ctx->codec_type = AVMEDIA_TYPE_VIDEO;
     codec_ctx->width = real_width;
     codec_ctx->height = real_height;
-    codec_ctx->bit_rate = 400000;
+    codec_ctx->bit_rate = 1250000;
     codec_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
-    codec_ctx->level = 31;
+    codec_ctx->level = 50;
     codec_ctx->thread_count = 8;
     codec_ctx->profile = FF_PROFILE_H264_HIGH_444;
     codec_ctx->coded_height = real_height;
     codec_ctx->coded_width = real_width;
     codec_ctx->sample_aspect_ratio = (AVRational) {1, 1};
     codec_ctx->framerate = (AVRational) {fps, 1};
-    codec_ctx->gop_size = 12;
-    codec_ctx->max_b_frames = 2;
+    codec_ctx->time_base = (AVRational) {1, fps};
+    codec_ctx->gop_size = 25;
+    codec_ctx->max_b_frames = 0;
+    codec_ctx->has_b_frames = 0;
     codec_ctx->refs = 1;
     if (out_ctx->oformat->flags & AVFMT_GLOBALHEADER) {
         codec_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
@@ -80,7 +86,7 @@ void init() {
         codec_ctx->qmax = 51;
         codec_ctx->qcompress = (float) 0.6;
         //设置编码速度为慢，越慢质量越好 适中即可
-        av_opt_set(codec_ctx->priv_data, "preset", "medium", 0);
+        av_opt_set(codec_ctx->priv_data, "preset", "superfast", 0);
         //设置0延迟编码
 //        av_dict_set(&param, "preset", "superfast", 0);
 //        av_dict_set(&param, "tune", "zerolatency", 0);
@@ -102,6 +108,8 @@ void init() {
     out_stream->codecpar->codec_tag = 0;
     out_stream->codecpar->codec_id = AV_CODEC_ID_H264;
     out_stream->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
+    out_stream->time_base.num = 1;
+    out_stream->time_base.den = fps;
 
     if (avcodec_parameters_from_context(out_stream->codecpar, codec_ctx) < 0) {
         LOGE("Failed av codec parameters_from_context");
@@ -168,6 +176,7 @@ Java_com_example_rtmp_1demo1_MainActivity_native_1ffmpeg_1push_1rtmp(JNIEnv *env
     frame->width = real_width;
     frame->height = real_height;
     frame->format = codec_ctx->pix_fmt;
+    frame->pts = count;
     av_image_fill_arrays(
             frame->data, frame->linesize,
             (uint8_t *) i420, codec_ctx->pix_fmt, codec_ctx->width,
@@ -178,6 +187,7 @@ Java_com_example_rtmp_1demo1_MainActivity_native_1ffmpeg_1push_1rtmp(JNIEnv *env
         av_frame_free(&frame);
         return;
     }
+    pts++;
     pkt = av_packet_alloc();
     while (avcodec_receive_packet(codec_ctx, pkt) >= 0) {
         pkt->pts = count * (out_stream->time_base.den) / ((out_stream->time_base.num) * fps);
