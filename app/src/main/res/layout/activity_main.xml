@@ -12,7 +12,10 @@
         android:layout_height="match_parent"/>
 
     <EditText
+        tools:text="aaaaa"
         android:id="@+id/editText"
+        android:lines="1"
+        android:inputType="textPassword"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_margin="50dp"

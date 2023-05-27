@@ -223,8 +223,6 @@ Java_com_example_rtmp_1demo1_MainActivity_native_1ffmpeg_1push_1rtmp(JNIEnv *env
         );
     }
 
-
-
     ret = avcodec_send_frame(codec_ctx, frame);
     if (ret < 0) {
         av_frame_free(&frame);

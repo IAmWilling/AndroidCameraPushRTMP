@@ -23,6 +23,10 @@ import android.os.Bundle;
 import android.util.Size;
 import android.view.Surface;
 import android.view.View;
+import android.view.animation.Animation;
+import android.view.animation.AnimationSet;
+import android.view.animation.RotateAnimation;
+import android.view.animation.ScaleAnimation;
 import android.widget.TextView;
 
 import com.example.rtmp_demo1.databinding.ActivityMainBinding;
@@ -53,7 +57,6 @@ public class MainActivity extends AppCompatActivity {
     private ActivityMainBinding binding;
     private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
     private Executor executor = Executors.newSingleThreadExecutor();
-    long count = 0;
 
     private boolean isPush = true;
 
@@ -77,13 +80,14 @@ public class MainActivity extends AppCompatActivity {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
                 bindPreview(cameraProvider);
+
             } catch (ExecutionException | InterruptedException e) {
             }
         }, ContextCompat.getMainExecutor(this));
         binding.push.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                
+                binding.editText.setText("rtmp://154.8.177.210:1935/live/test");
                 if (binding.editText.getText().toString().trim().length() < 0) {
                     return;
                 }
@@ -99,17 +103,16 @@ public class MainActivity extends AppCompatActivity {
                 isPush = !isPush;
             }
         });
-
+        binding.select.setText("后置");
         binding.select.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 if (CAMERA_SHOOTING_POSITION == CameraSelector.LENS_FACING_FRONT) {
-
                     CAMERA_SHOOTING_POSITION = CameraSelector.LENS_FACING_BACK;
+                    binding.select.setText("前置");
                 } else {
-
                     CAMERA_SHOOTING_POSITION = CameraSelector.LENS_FACING_FRONT;
-
+                    binding.select.setText("后置");
                 }
                 try {
                     bindPreview(cameraProviderFuture.get());
@@ -271,6 +274,22 @@ public class MainActivity extends AppCompatActivity {
         }
         return data;
     }
+
+    public void selectAnim(){
+        ScaleAnimation anim = new ScaleAnimation(1f, -1f, 1f, 1f, Animation.RELATIVE_TO_SELF, 0.5f, Animation.RELATIVE_TO_SELF, 0.5f);
+        anim.setFillAfter(true); // 设置保持动画最后的状态
+        anim.setDuration(500); // 设置动画时间
+        ScaleAnimation anim2 = new ScaleAnimation(1f, -1f, 1f, 1f, Animation.RELATIVE_TO_SELF, 0.5f, Animation.RELATIVE_TO_SELF, 0.5f);
+        anim2.setFillAfter(true); // 设置保持动画最后的状态
+        anim2.setDuration(500); // 设置动画时间
+
+        AnimationSet set = new AnimationSet(true);
+        set.addAnimation(anim);
+        set.addAnimation(anim2);
+        set.setFillAfter(true); // 设置保持动画最后的状态
+        binding.viewFinder.startAnimation(set);
+    }
+
 
     /**
      * RTMP推流地址
