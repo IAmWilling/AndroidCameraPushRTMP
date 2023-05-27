@@ -22,6 +22,7 @@ import android.media.Image;
 import android.os.Bundle;
 import android.util.Size;
 import android.view.Surface;
+import android.view.View;
 import android.widget.TextView;
 
 import com.example.rtmp_demo1.databinding.ActivityMainBinding;
@@ -48,22 +49,27 @@ public class MainActivity extends AppCompatActivity {
         System.loadLibrary("postproc");
         System.loadLibrary("avdevice");
     }
+
     private ActivityMainBinding binding;
     private ListenableFuture<ProcessCameraProvider> cameraProviderFuture;
     private Executor executor = Executors.newSingleThreadExecutor();
     long count = 0;
+
+    private boolean isPush = true;
+
+    private boolean startPush = false;
+
+    private int CAMERA_SHOOTING_POSITION = CameraSelector.LENS_FACING_FRONT;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        if(ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{
-                    Manifest.permission.CAMERA
-            }, 0);
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, 0);
         }
-
+        native_set_camera_position(CAMERA_SHOOTING_POSITION == CameraSelector.LENS_FACING_FRONT);
         binding.viewFinder.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
         cameraProviderFuture = ProcessCameraProvider.getInstance(this);
         //当cameraProviderFuture初始化完成后进行绑定预览view
@@ -74,51 +80,86 @@ public class MainActivity extends AppCompatActivity {
             } catch (ExecutionException | InterruptedException e) {
             }
         }, ContextCompat.getMainExecutor(this));
+        binding.push.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                binding.editText.setText("rtmp://154.8.177.210:1935/live/test");
+                if (binding.editText.getText().toString().trim().length() < 0) {
+                    return;
+                }
+                if (isPush) {
+                    native_set_rtmp_path(binding.editText.getText().toString().trim());
+                    startPush = true;
+                    binding.push.setText("结束");
+                } else {
+                    startPush = false;
+                    binding.push.setText("推流");
+                    native_ffmpeg_push_rtmp_stop();
+                }
+                isPush = !isPush;
+            }
+        });
 
+        binding.select.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (CAMERA_SHOOTING_POSITION == CameraSelector.LENS_FACING_FRONT) {
+
+                    CAMERA_SHOOTING_POSITION = CameraSelector.LENS_FACING_BACK;
+                } else {
+
+                    CAMERA_SHOOTING_POSITION = CameraSelector.LENS_FACING_FRONT;
+
+                }
+                try {
+                    bindPreview(cameraProviderFuture.get());
+                    native_set_camera_position(CAMERA_SHOOTING_POSITION == CameraSelector.LENS_FACING_FRONT);
+                } catch (ExecutionException e) {
+                    throw new RuntimeException(e);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        });
 
     }
-    void bindPreview(ProcessCameraProvider cameraProvider) {
-        Preview preview = new Preview.Builder()
-                .build();
 
-        CameraSelector cameraSelector = new CameraSelector.Builder()
-                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
-                .build();
+    void bindPreview(ProcessCameraProvider cameraProvider) {
+        Preview preview = new Preview.Builder().build();
+
+        CameraSelector cameraSelector = new CameraSelector.Builder().requireLensFacing(CAMERA_SHOOTING_POSITION).build();
 
 
         preview.setSurfaceProvider(binding.viewFinder.getSurfaceProvider());
-        ImageAnalysis imageAnalysis =
-                new ImageAnalysis.Builder()
-                        .setTargetResolution(new Size(1280, 720))
-                        .setTargetRotation(Surface.ROTATION_270)
+        ImageAnalysis imageAnalysis = new ImageAnalysis.Builder().setTargetResolution(new Size(640, 480)).setTargetRotation(Surface.ROTATION_270)
 //                        .setTargetAspectRatio(AspectRatio.RATIO_16_9)
-                        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build();
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888).setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build();
 
         imageAnalysis.setAnalyzer(executor, new ImageAnalysis.Analyzer() {
             @Override
             public void analyze(@NonNull ImageProxy imageProxy) {
-                int rotationDegrees = imageProxy.getImageInfo().getRotationDegrees();
                 Image image = imageProxy.getImage();
                 int width = image.getWidth();
                 int height = image.getHeight();
-                count+=1;
-                //转换I420格式
-                byte[] i420 = getDataFromImage(image,COLOR_FormatI420);
-//                byte [] i420 = convertYuvBuffer(image);
-                //yuv旋转270 宽高调整
-                byte[] i420_Roate270 = libyuvI420Roate90(i420, width, height);
-                native_ffmpeg_push_rtmp(i420_Roate270,count);
-
-
+                if (startPush) {
+                    //转换I420格式
+                    byte[] i420 = getDataFromImage(image, COLOR_FormatI420);
+                    //后置相机 270 90
+                    //前置相机需要做镜面处理 90 270 【180 270 也不是不行】【270 270需要镜面】
+                    //yuv旋转270 宽高调整
+                    byte[] i420_Roate270 = native_i420_roate(i420, width, height, CAMERA_SHOOTING_POSITION == CameraSelector.LENS_FACING_FRONT ? 270 : 90);
+                    native_ffmpeg_push_rtmp(i420_Roate270);
+                }
                 imageProxy.close();
             }
         });
-        Camera camera = cameraProvider.bindToLifecycle((LifecycleOwner) this, cameraSelector, preview, imageAnalysis);
+        cameraProvider.unbindAll();
+        cameraProvider.bindToLifecycle((LifecycleOwner) this, cameraSelector, preview, imageAnalysis);
     }
+
     private static final int COLOR_FormatI420 = 1;
     private static final int COLOR_FormatNV21 = 2;
+
     private static boolean isImageFormatSupported(Image image) {
         int format = image.getFormat();
         switch (format) {
@@ -129,6 +170,7 @@ public class MainActivity extends AppCompatActivity {
         }
         return false;
     }
+
     private byte[] convertYuvBuffer(Image image) {
         int w = image.getWidth();
         int h = image.getHeight();
@@ -158,6 +200,7 @@ public class MainActivity extends AppCompatActivity {
         }
         return outBuffer;
     }
+
     private static byte[] getDataFromImage(Image image, int colorFormat) {
         if (colorFormat != COLOR_FormatI420 && colorFormat != COLOR_FormatNV21) {
             throw new IllegalArgumentException("only support COLOR_FormatI420 " + "and COLOR_FormatNV21");
@@ -229,8 +272,40 @@ public class MainActivity extends AppCompatActivity {
         return data;
     }
 
-    public native String stringFromJNI();
-    public native byte[] libyuvI420Roate90(byte[] i420, int width, int height);
+    /**
+     * RTMP推流地址
+     *
+     * @param trim
+     */
+    public native void native_set_rtmp_path(String trim);
 
-    public native void native_ffmpeg_push_rtmp(byte[] data,long count);
+    /**
+     * i420旋转
+     *
+     * @param i420   frame
+     * @param width
+     * @param height
+     * @param angle
+     * @return
+     */
+    public native byte[] native_i420_roate(byte[] i420, int width, int height, int angle);
+
+    /**
+     * 推流
+     *
+     * @param data
+     */
+    public native void native_ffmpeg_push_rtmp(byte[] data);
+
+    /**
+     * 设置相机是前置还是后置
+     *
+     * @param isFront true前 false后
+     */
+    public native void native_set_camera_position(boolean isFront);
+
+    /**
+     * 结束推流
+     */
+    public native void native_ffmpeg_push_rtmp_stop();
 }
