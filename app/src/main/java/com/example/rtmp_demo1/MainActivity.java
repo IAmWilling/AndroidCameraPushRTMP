@@ -83,7 +83,7 @@ public class MainActivity extends AppCompatActivity {
         binding.push.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                binding.editText.setText("rtmp://154.8.177.210:1935/live/test");
+                
                 if (binding.editText.getText().toString().trim().length() < 0) {
                     return;
                 }

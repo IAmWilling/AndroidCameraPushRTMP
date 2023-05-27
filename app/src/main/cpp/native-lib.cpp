@@ -68,7 +68,7 @@ void mirrorI420(uint8_t *src_i420_data, jint width, jint height, uint8_t *dst_i4
 
 void init() {
     avformat_network_init();
-    //rtmp://154.8.177.210:1935/live/test
+
     avformat_alloc_output_context2(&out_ctx, NULL, "flv", rtmp_path);
     codec = avcodec_find_encoder(AV_CODEC_ID_H264);
     if (!codec) {
