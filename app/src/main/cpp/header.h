@@ -4,7 +4,11 @@
 
 #ifndef ANDROID_VIDEOINTERCEPT_HEADER_H
 #define ANDROID_VIDEOINTERCEPT_HEADER_H
+#include "queue"
+#include "thread"
 extern "C" {
+
+
 #include "libavcodec/avcodec.h"
 #include "libavfilter/avfilter.h"
 #include "libavformat/avformat.h"

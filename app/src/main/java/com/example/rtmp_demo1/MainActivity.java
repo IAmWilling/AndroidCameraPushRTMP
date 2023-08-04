@@ -2,7 +2,6 @@ package com.example.rtmp_demo1;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.camera.core.AspectRatio;
 import androidx.camera.core.Camera;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
@@ -15,6 +14,7 @@ import androidx.core.content.ContextCompat;
 import androidx.lifecycle.LifecycleOwner;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
@@ -25,9 +25,7 @@ import android.view.Surface;
 import android.view.View;
 import android.view.animation.Animation;
 import android.view.animation.AnimationSet;
-import android.view.animation.RotateAnimation;
 import android.view.animation.ScaleAnimation;
-import android.widget.TextView;
 
 import com.example.rtmp_demo1.databinding.ActivityMainBinding;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -41,6 +39,7 @@ public class MainActivity extends AppCompatActivity {
     static {
         System.loadLibrary("jpeg");
         System.loadLibrary("turbojpeg");
+        System.loadLibrary("fdk-aac");
         System.loadLibrary("yuv");
         System.loadLibrary("x264");
         System.loadLibrary("androidcamerapushrtmp");
@@ -63,15 +62,19 @@ public class MainActivity extends AppCompatActivity {
     private boolean startPush = false;
 
     private int CAMERA_SHOOTING_POSITION = CameraSelector.LENS_FACING_FRONT;
+    private AudioHelper audioHelper;
+    private Camera camera;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, 0);
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO}, 0);
         }
+        initAudio();
         native_set_camera_position(CAMERA_SHOOTING_POSITION == CameraSelector.LENS_FACING_FRONT);
         binding.viewFinder.setImplementationMode(PreviewView.ImplementationMode.COMPATIBLE);
         cameraProviderFuture = ProcessCameraProvider.getInstance(this);
@@ -80,7 +83,6 @@ public class MainActivity extends AppCompatActivity {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
                 bindPreview(cameraProvider);
-
             } catch (ExecutionException | InterruptedException e) {
             }
         }, ContextCompat.getMainExecutor(this));
@@ -94,9 +96,13 @@ public class MainActivity extends AppCompatActivity {
                 if (isPush) {
                     native_set_rtmp_path(binding.editText.getText().toString().trim());
                     startPush = true;
+                    native_set_start_flag(startPush);
+                    audioHelper.start();
                     binding.push.setText("结束");
                 } else {
                     startPush = false;
+                    native_set_start_flag(startPush);
+                    audioHelper.stop();
                     binding.push.setText("推流");
                     native_ffmpeg_push_rtmp_stop();
                 }
@@ -141,23 +147,25 @@ public class MainActivity extends AppCompatActivity {
         imageAnalysis.setAnalyzer(executor, new ImageAnalysis.Analyzer() {
             @Override
             public void analyze(@NonNull ImageProxy imageProxy) {
-                Image image = imageProxy.getImage();
+                @SuppressLint("UnsafeOptInUsageError") Image image = imageProxy.getImage();
                 int width = image.getWidth();
                 int height = image.getHeight();
+
                 if (startPush) {
+                    native_only_init_once(width, height);
                     //转换I420格式
                     byte[] i420 = getDataFromImage(image, COLOR_FormatI420);
                     //后置相机 270 90
                     //前置相机需要做镜面处理 90 270 【180 270 也不是不行】【270 270需要镜面】
                     //yuv旋转270 宽高调整
                     byte[] i420_Roate270 = native_i420_roate(i420, width, height, CAMERA_SHOOTING_POSITION == CameraSelector.LENS_FACING_FRONT ? 270 : 90);
-                    native_ffmpeg_push_rtmp(i420_Roate270);
+                    native_ffmpeg_push_rtmp(i420_Roate270,System.nanoTime() / 1000000000.0);
                 }
                 imageProxy.close();
             }
         });
         cameraProvider.unbindAll();
-        cameraProvider.bindToLifecycle((LifecycleOwner) this, cameraSelector, preview, imageAnalysis);
+        camera = cameraProvider.bindToLifecycle((LifecycleOwner) this, cameraSelector, preview, imageAnalysis);
     }
 
     private static final int COLOR_FormatI420 = 1;
@@ -202,6 +210,23 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return outBuffer;
+    }
+
+    void initAudio() {
+        audioHelper = new AudioHelper(this);
+        audioHelper.setAudioDataCallback(new AudioHelper.AudioDataCallback() {
+            @Override
+            public void onData(byte[] data, int length,int srcNbSamples) {
+                //pcm数据
+                native_encode_audio(data,srcNbSamples,System.nanoTime() / 1000000000.0);
+            }
+        });
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        initAudio();
     }
 
     private static byte[] getDataFromImage(Image image, int colorFormat) {
@@ -275,7 +300,7 @@ public class MainActivity extends AppCompatActivity {
         return data;
     }
 
-    public void selectAnim(){
+    public void selectAnim() {
         ScaleAnimation anim = new ScaleAnimation(1f, -1f, 1f, 1f, Animation.RELATIVE_TO_SELF, 0.5f, Animation.RELATIVE_TO_SELF, 0.5f);
         anim.setFillAfter(true); // 设置保持动画最后的状态
         anim.setDuration(500); // 设置动画时间
@@ -298,6 +323,14 @@ public class MainActivity extends AppCompatActivity {
      */
     public native void native_set_rtmp_path(String trim);
 
+
+    public native void native_set_start_flag(boolean isStart);
+
+    /**
+     * 内部处理只初始化一次为了拿到真实图像宽高
+     */
+    public native void native_only_init_once(int width, int height);
+
     /**
      * i420旋转
      *
@@ -313,8 +346,9 @@ public class MainActivity extends AppCompatActivity {
      * 推流
      *
      * @param data
+     * @param l
      */
-    public native void native_ffmpeg_push_rtmp(byte[] data);
+    public native void native_ffmpeg_push_rtmp(byte[] data, double l);
 
     /**
      * 设置相机是前置还是后置
@@ -327,4 +361,13 @@ public class MainActivity extends AppCompatActivity {
      * 结束推流
      */
     public native void native_ffmpeg_push_rtmp_stop();
+
+    /**
+     * 编码音频
+     *
+     * @param data
+     * @param srcNbSamples
+     * @param l
+     */
+    public native void native_encode_audio(byte[] data, int srcNbSamples, double l);
 }

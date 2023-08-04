@@ -8,6 +8,7 @@ cmake_minimum_required(VERSION 3.10.1)
 include_directories(include)
 include_directories(jpeg)
 include_directories(libyuv)
+include_directories(fdk-aac)
 
 
 
@@ -120,6 +121,15 @@ set_target_properties(avdevice
         ${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${CMAKE_ANDROID_ARCH_ABI}/libavdevice.so
         )
 
+add_library(fdkaac
+        SHARED
+        IMPORTED)
+set_target_properties(fdkaac
+        PROPERTIES
+        IMPORTED_LOCATION
+        ${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${CMAKE_ANDROID_ARCH_ABI}/libfdk-aac.so
+        )
+
 
 find_library( # Sets the name of the path variable.
         log-lib
@@ -153,6 +163,7 @@ target_link_libraries( # Specifies the target library.
         yuv
         jpeg
         turbojpeg
+        fdkaac
         # Links the target library to the log library
         # included in the NDK.
         ${log-lib}
